@@ -411,7 +411,25 @@
         <!-- モード切り替え -->
         <div class="mode-toggle">
             <button class="toggle-btn active" onclick="switchMode('employee')">👤 従業員モード</button>
-            <button class="toggle-btn" onclick="switchMode('admin')">📊 管理者モード</button>
+            <button class="toggle-btn" onclick="requestAdminAccess()">📊 管理者モード</button>
+        </div>
+
+        <!-- 管理者認証ダイアログ -->
+        <div id="adminAuthDialog" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); z-index: 9999;">
+            <div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: white; padding: 30px; border-radius: 15px; max-width: 400px; width: 90%;">
+                <h3 style="text-align: center; margin-bottom: 20px; color: #1e293b;">🔒 管理者認証</h3>
+                <div style="margin-bottom: 20px;">
+                    <label style="display: block; font-weight: bold; margin-bottom: 10px;">管理者パスワード</label>
+                    <input type="password" id="adminPassword" style="width: 100%; padding: 12px; border: 2px solid #e2e8f0; border-radius: 8px; font-size: 1.1rem;" placeholder="パスワードを入力">
+                </div>
+                <div style="display: flex; gap: 10px;">
+                    <button onclick="closeAdminAuth()" style="flex: 1; padding: 12px; background: #64748b; color: white; border: none; border-radius: 8px; font-weight: bold;">キャンセル</button>
+                    <button onclick="verifyAdminPassword()" style="flex: 1; padding: 12px; background: #4f46e5; color: white; border: none; border-radius: 8px; font-weight: bold;">ログイン</button>
+                </div>
+                <div style="margin-top: 15px; font-size: 0.9rem; color: #64748b; text-align: center;">
+                    ※管理者のみアクセス可能
+                </div>
+            </div>
         </div>
 
         <!-- 従業員モード -->
@@ -652,6 +670,43 @@
             '0099': { name: '退職者A', dept: '本部', status: 'retired', hireDate: '2018-04-01', retireDate: '2024-12-31' }
         };
 
+        // ===== 管理者認証機能 =====
+        const ADMIN_PASSWORD = 'admin2025'; // 管理者パスワード（要変更）
+        let isAdminAuthenticated = false;
+
+        // 管理者アクセス要求
+        function requestAdminAccess() {
+            document.getElementById('adminAuthDialog').style.display = 'block';
+            document.getElementById('adminPassword').focus();
+        }
+
+        // 認証ダイアログ閉じる
+        function closeAdminAuth() {
+            document.getElementById('adminAuthDialog').style.display = 'none';
+            document.getElementById('adminPassword').value = '';
+            // 従業員モードボタンをアクティブに戻す
+            const toggleBtns = document.querySelectorAll('.toggle-btn');
+            toggleBtns.forEach(btn => btn.classList.remove('active'));
+            toggleBtns[0].classList.add('active');
+        }
+
+        // 管理者パスワード検証
+        function verifyAdminPassword() {
+            const inputPassword = document.getElementById('adminPassword').value;
+            
+            if (inputPassword === ADMIN_PASSWORD) {
+                isAdminAuthenticated = true;
+                closeAdminAuth();
+                switchMode('admin');
+                debug('管理者認証成功');
+            } else {
+                alert('❌ パスワードが間違っています');
+                document.getElementById('adminPassword').value = '';
+                document.getElementById('adminPassword').focus();
+                debug('管理者認証失敗');
+            }
+        }
+
         // ===== 共通機能 =====
 
         // デバッグ表示
@@ -669,11 +724,16 @@
             }
         }
 
-        // モード切り替え
+        // モード切り替え（認証チェック追加）
         function switchMode(mode) {
             const employeeMode = document.getElementById('employeeMode');
             const adminMode = document.getElementById('adminMode');
             const toggleBtns = document.querySelectorAll('.toggle-btn');
+
+            if (mode === 'admin' && !isAdminAuthenticated) {
+                debug('管理者モード: 認証が必要');
+                return; // 認証なしでは管理者モードに切り替え不可
+            }
 
             toggleBtns.forEach(btn => btn.classList.remove('active'));
 
@@ -682,11 +742,12 @@
                 adminMode.classList.remove('active');
                 toggleBtns[0].classList.add('active');
                 checkAutoLogin();
-            } else {
+            } else if (mode === 'admin') {
                 employeeMode.classList.remove('active');
                 adminMode.classList.add('active');
                 toggleBtns[1].classList.add('active');
                 refreshAdminData();
+                debug('管理者モードに切り替え');
             }
         }
 
@@ -849,6 +910,54 @@
             }
         }
 
+        // Google Sheets API設定
+        const SHEETS_API_URL = 'https://script.google.com/macros/s/YOUR_SCRIPT_ID/exec'; // 要設定
+
+        // Google Sheetsにデータ送信
+        function sendToSheets(record) {
+            // Google Sheets連携が設定されている場合のみ送信
+            if (!SHEETS_API_URL || SHEETS_API_URL.includes('YOUR_SCRIPT_ID')) {
+                debug('Google Sheets未設定 - ローカル保存のみ');
+                return;
+            }
+
+            try {
+                const payload = {
+                    timestamp: new Date().toISOString(),
+                    employeeNumber: record.emp,
+                    employeeName: record.empName,
+                    department: record.empDept,
+                    date: record.date,
+                    time: record.time,
+                    type: record.type,
+                    deviceId: deviceId
+                };
+
+                fetch(SHEETS_API_URL, {
+                    method: 'POST',
+                    mode: 'cors',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(payload)
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        debug('Google Sheets送信成功');
+                    } else {
+                        debug('Google Sheets送信失敗: ' + data.error);
+                    }
+                })
+                .catch(error => {
+                    debug('Google Sheets送信エラー: ' + error.message);
+                    // エラーでも処理は続行（ローカルには保存済み）
+                });
+            } catch (error) {
+                debug('Sheets送信エラー: ' + error.message);
+            }
+        }
+
         // データ保存
         function saveData() {
             try {
@@ -929,6 +1038,9 @@
 
             data.push(record);
             saveData();
+            
+            // Google Sheetsにも送信（非同期・失敗時もOK）
+            sendToSheets(record);
 
             var names = {
                 'checkin': '出勤',
@@ -1012,9 +1124,114 @@
         // 管理者データ更新
         function refreshAdminData() {
             loadData();
-            allRecords = data.slice();
-            updateStats();
-            filterRecords();
+            
+            // 今日の日付を自動設定
+            const today = new Date().toISOString().split('T')[0];
+            const dateFilterEl = document.getElementById('dateFilter');
+            if (dateFilterEl && dateFilterEl.value !== today) {
+                dateFilterEl.value = today;
+                debug('日付フィルターを今日に更新: ' + today);
+            }
+            
+            // Google Sheetsからもデータを取得してマージ
+            loadFromSheets().then(sheetsData => {
+                if (sheetsData.length > 0) {
+                    // ローカルデータとGoogle Sheetsデータをマージ
+                    const mergedData = [...data];
+                    
+                    sheetsData.forEach(sheetsRecord => {
+                        // 重複チェック（同じタイムスタンプのレコードは除外）
+                        const exists = mergedData.some(localRecord => 
+                            localRecord.emp === sheetsRecord.emp &&
+                            localRecord.date === sheetsRecord.date &&
+                            localRecord.time === sheetsRecord.time &&
+                            localRecord.type === sheetsRecord.type
+                        );
+                        
+                        if (!exists) {
+                            mergedData.push(sheetsRecord);
+                        }
+                    });
+                    
+                    allRecords = mergedData.sort((a, b) => 
+                        new Date(b.date + ' ' + b.time) - new Date(a.date + ' ' + a.time)
+                    );
+                    
+                    debug('データマージ完了: ローカル' + data.length + '件 + Sheets' + sheetsData.length + '件 = 合計' + allRecords.length + '件');
+                } else {
+                    allRecords = data.slice();
+                    debug('ローカルデータのみ: ' + allRecords.length + '件（Google Sheets未設定または未接続）');
+                }
+                
+                updateStats();
+                filterRecords();
+                
+                // データが0件の場合の追加表示
+                if (allRecords.length === 0) {
+                    debug('❌ データなし: スマホで打刻またはGoogle Sheets連携設定が必要');
+                    showNoDataGuidance();
+                }
+            }).catch(error => {
+                debug('Sheets取得エラー: ' + error.message);
+                allRecords = data.slice();
+                updateStats();
+                filterRecords();
+                showSyncError();
+            });
+        }
+
+        // データなし時のガイダンス表示
+        function showNoDataGuidance() {
+            const tbody = document.getElementById('recordsBody');
+            tbody.innerHTML = `
+                <tr>
+                    <td colspan="6" class="no-data">
+                        📱 データが見つかりません<br><br>
+                        <strong>確認事項:</strong><br>
+                        1. スマホで打刻を実行済みか<br>
+                        2. Google Sheets連携設定済みか<br>
+                        3. 日付フィルターが正しいか<br><br>
+                        <button class="btn" onclick="testLocalData()">📋 ローカルデータ確認</button>
+                    </td>
+                </tr>
+            `;
+        }
+
+        // 同期エラー表示
+        function showSyncError() {
+            const tbody = document.getElementById('recordsBody');
+            tbody.innerHTML = `
+                <tr>
+                    <td colspan="6" class="no-data">
+                        ⚠️ Google Sheets接続エラー<br><br>
+                        ローカルデータのみ表示中<br>
+                        スマホとPCのデータ同期にはGoogle Sheets設定が必要<br><br>
+                        <button class="btn btn-success" onclick="window.open('/mnt/user-data/outputs/device-sync-solution-guide.md', '_blank')">📋 設定ガイド</button>
+                    </td>
+                </tr>
+            `;
+        }
+
+        // ローカルデータテスト
+        function testLocalData() {
+            const localKeys = [];
+            for (let i = 0; i < localStorage.length; i++) {
+                const key = localStorage.key(i);
+                if (key.includes('timecard') || key.includes('punch') || key.includes('unified')) {
+                    localKeys.push(key);
+                }
+            }
+            
+            if (localKeys.length > 0) {
+                debug('ローカルストレージキー発見: ' + localKeys.join(', '));
+                alert('ローカルデータキー:\n' + localKeys.join('\n') + '\n\nコンソールで詳細確認');
+                localKeys.forEach(key => {
+                    console.log(key + ':', localStorage.getItem(key));
+                });
+            } else {
+                debug('ローカルストレージにタイムカードデータなし');
+                alert('ローカルストレージにデータが見つかりません。\n\nスマホで打刻してからもう一度お試しください。');
+            }
         }
 
         // 統計情報更新
@@ -1227,6 +1444,16 @@
             if (setupInput) {
                 setupInput.addEventListener('input', function(e) {
                     e.target.value = e.target.value.replace(/[^0-9]/g, '');
+                });
+            }
+            
+            // 管理者パスワード入力でEnterキー対応
+            const adminPasswordInput = document.getElementById('adminPassword');
+            if (adminPasswordInput) {
+                adminPasswordInput.addEventListener('keypress', function(e) {
+                    if (e.key === 'Enter') {
+                        verifyAdminPassword();
+                    }
                 });
             }
             
